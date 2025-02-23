@@ -1,0 +1,1 @@
+uv run uvicorn --factory speaches.main:create_app --port 8000 --host 0.0.0.0
