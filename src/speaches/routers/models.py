@@ -14,7 +14,7 @@ from speaches.api_types import (
     ListModelsResponse,
     Model,
 )
-from speaches.hf_utils import list_local_whisper_models, list_whisper_models
+from speaches.hf_utils import list_local_whisper_models, list_whisper_models, list_moonshine_models
 
 if TYPE_CHECKING:
     from huggingface_hub.hf_api import ModelInfo
@@ -26,9 +26,13 @@ router = APIRouter(tags=["models"])
 def get_models() -> ListModelsResponse:
     if os.getenv("HF_HUB_OFFLINE") is not None:
         whisper_models = list(list_local_whisper_models())
+        # Note: Local Moonshine models not supported yet
+        moonshine_models = []
     else:
         whisper_models = list(list_whisper_models())
-    return ListModelsResponse(data=whisper_models)
+        moonshine_models = list(list_moonshine_models())
+    
+    return ListModelsResponse(data=whisper_models + moonshine_models)
 
 
 @router.get("/v1/models/{model_id:path}")

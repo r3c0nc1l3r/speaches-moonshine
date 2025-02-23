@@ -4,6 +4,10 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# Refs
+refs/*
+!refs/.gitkeep
+
 # C extensions
 *.so
 

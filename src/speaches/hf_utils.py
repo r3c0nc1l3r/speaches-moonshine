@@ -257,6 +257,46 @@ def download_kokoro_model() -> None:
     voices_path.write_bytes(res.content)
 
 
+def list_moonshine_models() -> Generator[Model, None, None]:
+    """List available Moonshine models from HuggingFace."""
+    models = huggingface_hub.list_models(
+        author="UsefulSensors",
+        search="moonshine",
+        cardData=True
+    )
+    models = list(models)
+    models.sort(key=lambda model: model.downloads or -1, reverse=True)
+    for model in models:
+        assert model.created_at is not None
+        assert model.card_data is not None
+        transformed_model = Model(
+            id=model.id,
+            created=int(model.created_at.timestamp()),
+            object_="model",
+            owned_by=model.id.split("/")[0],
+            language=["en"],  # Currently Moonshine only supports English
+        )
+        yield transformed_model
+
+
+def get_moonshine_model_path(model_id: str) -> str:
+    """Get the path to a Moonshine model.
+
+    Args:
+        model_id: The ID of the model to get the path for.
+
+    Returns:
+        The path to the model.
+    """
+    # Moonshine models are stored in the HuggingFace cache
+    # We specifically want the CTranslate2 version
+    return huggingface_hub.snapshot_download(
+        model_id,
+        local_files_only=os.getenv("HF_HUB_OFFLINE") is not None,
+        allow_patterns=["ctranslate2/*"],  # Only download the CTranslate2 version
+    )
+
+
 # alternative implementation that uses `huggingface_hub.scan_cache_dir`. Slightly cleaner but much slower
 # def list_local_model_ids() -> list[str]:
 #     start = time.perf_counter()

@@ -38,6 +38,21 @@ class WhisperConfig(BaseModel):
     """
 
 
+class MoonshineConfig(BaseModel):
+    """Configuration for Moonshine models."""
+    
+    inference_device: Device = "auto"
+    device_index: int | list[int] = 0
+    compute_type: Quantization = "int8"  # Moonshine models are typically quantized to int8
+    cpu_threads: int = 0
+    ttl: int = Field(default=300, ge=-1)
+    """
+    Time in seconds until the model is unloaded if it is not being used.
+    -1: Never unload the model.
+    0: Unload the model immediately after usage.
+    """
+
+
 # TODO: document `alias` behaviour within the docstring
 class Config(BaseSettings):
     """Configuration for the application. Values can be set via environment variables.
@@ -73,6 +88,7 @@ class Config(BaseSettings):
     """
 
     whisper: WhisperConfig = WhisperConfig()
+    moonshine: MoonshineConfig = MoonshineConfig()
 
     loopback_host_url: str | None = None
     """

@@ -12,8 +12,9 @@ from typing import TYPE_CHECKING
 from faster_whisper import WhisperModel
 from kokoro_onnx import Kokoro
 from onnxruntime import InferenceSession
+import ctranslate2
 
-from speaches.hf_utils import get_kokoro_model_path, get_piper_voice_model_file
+from speaches.hf_utils import get_kokoro_model_path, get_piper_voice_model_file, get_moonshine_model_path
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -22,6 +23,7 @@ if TYPE_CHECKING:
 
     from speaches.config import (
         WhisperConfig,
+        MoonshineConfig,
     )
 
 logger = logging.getLogger(__name__)
@@ -226,6 +228,50 @@ class KokoroModelManager:
                 model_id,
                 load_fn=lambda: self._load_fn(model_id),
                 ttl=self.ttl,
+                unload_fn=self._handle_model_unload,
+            )
+            return self.loaded_models[model_id]
+
+
+class MoonshineModelManager:
+    def __init__(self, moonshine_config: MoonshineConfig) -> None:
+        self.moonshine_config = moonshine_config
+        self.loaded_models: OrderedDict[str, SelfDisposingModel[ctranslate2.Translator]] = OrderedDict()
+        self._lock = threading.Lock()
+
+    def _load_fn(self, model_id: str) -> ctranslate2.Translator:
+        model_path = get_moonshine_model_path(model_id)
+        # The CTranslate2 model is in a subdirectory
+        model_path = Path(model_path) / "ctranslate2"
+        return ctranslate2.Translator(
+            str(model_path),  # CTranslate2 expects a string path
+            device=self.moonshine_config.inference_device,
+            device_index=self.moonshine_config.device_index,
+            compute_type=self.moonshine_config.compute_type,
+            inter_threads=self.moonshine_config.cpu_threads if self.moonshine_config.cpu_threads > 0 else None,
+        )
+
+    def _handle_model_unload(self, model_id: str) -> None:
+        with self._lock:
+            if model_id in self.loaded_models:
+                del self.loaded_models[model_id]
+
+    def unload_model(self, model_id: str) -> None:
+        with self._lock:
+            model = self.loaded_models.get(model_id)
+            if model is None:
+                raise KeyError(f"Model {model_id} not found")
+            self.loaded_models[model_id].unload()
+
+    def load_model(self, model_id: str) -> SelfDisposingModel[ctranslate2.Translator]:
+        with self._lock:
+            if model_id in self.loaded_models:
+                logger.debug(f"{model_id} model already loaded")
+                return self.loaded_models[model_id]
+            self.loaded_models[model_id] = SelfDisposingModel[ctranslate2.Translator](
+                model_id,
+                load_fn=lambda: self._load_fn(model_id),
+                ttl=self.moonshine_config.ttl,
                 unload_fn=self._handle_model_unload,
             )
             return self.loaded_models[model_id]

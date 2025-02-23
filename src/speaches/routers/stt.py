@@ -1,17 +1,19 @@
 import asyncio
-from collections.abc import Generator, Iterable
+from collections.abc import Generator, Iterable, AsyncGenerator
 import logging
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Any
 
 from fastapi import (
     APIRouter,
     Form,
     Request,
     Response,
+    Depends,
 )
 from fastapi.responses import StreamingResponse
 from faster_whisper.transcribe import BatchedInferencePipeline, TranscriptionInfo
 from pydantic import Field
+import numpy as np
 
 from speaches.api_types import (
     DEFAULT_TIMESTAMP_GRANULARITIES,
@@ -21,8 +23,14 @@ from speaches.api_types import (
     TimestampGranularities,
     TranscriptionSegment,
 )
-from speaches.dependencies import AudioFileDependency, ConfigDependency, ModelManagerDependency
-from speaches.text_utils import segments_to_srt, segments_to_text, segments_to_vtt
+from speaches.audio import AudioFileDependency
+from speaches.config import Config
+from speaches.dependencies import (
+    ConfigDependency,
+    WhisperModelManagerDependency,
+    MoonshineModelManagerDependency,
+)
+from speaches.text_utils import segments_to_srt, segments_to_text, segments_to_vtt, get_timestamp_granularities
 
 logger = logging.getLogger(__name__)
 
@@ -155,7 +163,8 @@ async def get_timestamp_granularities(request: Request) -> TimestampGranularitie
 )
 def transcribe_file(
     config: ConfigDependency,
-    model_manager: ModelManagerDependency,
+    whisper_manager: WhisperModelManagerDependency,
+    moonshine_manager: MoonshineModelManagerDependency,
     request: Request,
     audio: AudioFileDependency,
     model: Annotated[ModelId, Form()],
@@ -165,7 +174,6 @@ def transcribe_file(
     temperature: Annotated[float, Form()] = 0.0,
     timestamp_granularities: Annotated[
         TimestampGranularities,
-        # WARN: `alias` doesn't actually work.
         Form(alias="timestamp_granularities[]"),
     ] = ["segment"],
     stream: Annotated[bool, Form()] = False,
@@ -177,21 +185,53 @@ def transcribe_file(
         logger.warning(
             "It only makes sense to provide `timestamp_granularities[]` when `response_format` is set to `verbose_json`. See https://platform.openai.com/docs/api-reference/audio/createTranscription#audio-createtranscription-timestamp_granularities."
         )
-    with model_manager.load_model(model) as whisper:
-        whisper_model = BatchedInferencePipeline(model=whisper) if config.whisper.use_batched_mode else whisper
-        segments, transcription_info = whisper_model.transcribe(
-            audio,
-            task="transcribe",
-            language=language,
-            initial_prompt=prompt,
-            word_timestamps="word" in timestamp_granularities,
-            temperature=temperature,
-            vad_filter=vad_filter,
-            hotwords=hotwords,
-        )
-        segments = TranscriptionSegment.from_faster_whisper_segments(segments)
 
-        if stream:
-            return segments_to_streaming_response(segments, transcription_info, response_format)
-        else:
-            return segments_to_response(segments, transcription_info, response_format)
+    # Check if the model is a Moonshine model
+    if model.startswith("usefulsensors/moonshine"):
+        with moonshine_manager.load_model(model) as moonshine:
+            # Convert audio to numpy array
+            audio_array = np.frombuffer(audio, dtype=np.int16).astype(np.float32) / 32768.0
+            
+            # Process with Moonshine
+            # Note: Moonshine models don't support all the features that Whisper does
+            # so we'll use basic transcription only
+            transcription = moonshine.translate_audio(audio_array)
+            
+            # Format response
+            if response_format == "text":
+                return transcription
+            elif response_format == "json":
+                return {"text": transcription}
+            else:  # verbose_json
+                return {
+                    "text": transcription,
+                    "segments": [
+                        {
+                            "text": transcription,
+                            "start": 0.0,
+                            "end": len(audio_array) / 16000.0,  # Assuming 16kHz audio
+                            "words": []  # Moonshine doesn't provide word-level timestamps
+                        }
+                    ],
+                    "language": language or "en"
+                }
+    else:
+        # Original Whisper model handling
+        with whisper_manager.load_model(model) as whisper:
+            whisper_model = BatchedInferencePipeline(model=whisper) if config.whisper.use_batched_mode else whisper
+            segments, transcription_info = whisper_model.transcribe(
+                audio,
+                task="transcribe",
+                language=language,
+                initial_prompt=prompt,
+                word_timestamps="word" in timestamp_granularities,
+                temperature=temperature,
+                vad_filter=vad_filter,
+                hotwords=hotwords,
+            )
+            segments = TranscriptionSegment.from_faster_whisper_segments(segments)
+
+            if stream:
+                return segments_to_streaming_response(segments, transcription_info, response_format)
+            else:
+                return segments_to_response(segments, transcription_info, response_format)
