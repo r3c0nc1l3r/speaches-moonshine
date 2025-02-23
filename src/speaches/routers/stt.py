@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from io import BytesIO
 import logging
-from typing import TYPE_CHECKING, Annotated
+from typing import TYPE_CHECKING, Annotated, Literal
 
 from fastapi import (
     APIRouter,
@@ -55,6 +55,14 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["automatic-speech-recognition"])
+
+
+class MoonshineTranscriptionInfo:
+    """A simple class to mimic the TranscriptionInfo structure from faster-whisper for Moonshine models."""
+    def __init__(self, duration: float):
+        self.language = "en"
+        self.duration = duration
+        self.transcription_options = type('Options', (), {'word_timestamps': True})()
 
 
 def segments_to_response(
@@ -187,22 +195,22 @@ async def get_timestamp_granularities(request: Request) -> TimestampGranularitie
     return timestamp_granularities
 
 
-def determine_asr_backend(model_name: str | None) -> tuple[ASRBackend, str]:
+def determine_asr_backend(model_name: str | None) -> tuple[Literal["whisper", "moonshine"], str]:
     """Determine which ASR backend to use based on the model name.
     
     Args:
         model_name: The name of the model to use. If None, defaults to Whisper.
         
     Returns:
-        A tuple of (ASRBackend, model_path)
+        A tuple of (backend_type, model_path) where backend_type is either "whisper" or "moonshine"
     """
     if not model_name:
-        return ASRBackend.WHISPER, "Systran/faster-whisper-small"
+        return "whisper", "Systran/faster-whisper-small"
         
     if "moonshine" in model_name.lower():
-        return ASRBackend.MOONSHINE, model_name
+        return "moonshine", model_name
     
-    return ASRBackend.WHISPER, model_name
+    return "whisper", model_name
 
 
 # https://platform.openai.com/docs/api-reference/audio/createTranscription
@@ -236,7 +244,7 @@ def transcribe_file(
     # Determine which backend to use based on the model name
     asr_backend, model_path = determine_asr_backend(model)
 
-    if asr_backend == ASRBackend.MOONSHINE:
+    if asr_backend == "moonshine":
         with model_manager.load_model(model_path) as asr:
             assert isinstance(asr, MoonshineASR)
             transcription, transcription_info = asr._transcribe(audio, prompt)
@@ -253,6 +261,7 @@ def transcribe_file(
                 no_speech_prob=0.0,
                 words=transcription.words
             )]
+            transcription_info = MoonshineTranscriptionInfo(len(audio) / SAMPLES_PER_SECOND)
     else:
         with model_manager.load_model(model_path) as asr:
             assert isinstance(asr, FasterWhisperASR)
@@ -328,27 +337,32 @@ async def transcribe_stream(
         # Determine which backend to use based on the model name
         asr_backend, model_path = determine_asr_backend(model)
 
-        if asr_backend == ASRBackend.MOONSHINE:
+        if asr_backend == "moonshine":
             with model_manager.load_model(model_path) as asr:
                 assert isinstance(asr, MoonshineASR)
                 async for transcription in audio_transcriber(asr, audio_stream, config.min_duration):
                     if ws.client_state == WebSocketState.DISCONNECTED:
                         break
-                    await ws.send_text(
-                        segments_to_text([TranscriptionSegment(
-                            id=0,
-                            seek=0,
-                            start=0,
-                            end=transcription.end,
-                            text=transcription.text,
-                            tokens=[],
-                            temperature=temperature,
-                            avg_logprob=0.0,
-                            compression_ratio=1.0,
-                            no_speech_prob=0.0,
-                            words=transcription.words
-                        )])
+                    transcription_info = MoonshineTranscriptionInfo(transcription.end)
+                    segment = TranscriptionSegment(
+                        id=0,
+                        seek=0,
+                        start=0,
+                        end=transcription.end,
+                        text=transcription.text,
+                        tokens=[],
+                        temperature=temperature,
+                        avg_logprob=0.0,
+                        compression_ratio=1.0,
+                        no_speech_prob=0.0,
+                        words=transcription.words
                     )
+                    if response_format == ResponseFormat.TEXT:
+                        await ws.send_text(segment.text)
+                    else:
+                        await ws.send_text(
+                            segments_to_text([segment])
+                        )
         else:
             with model_manager.load_model(model_path) as asr:
                 assert isinstance(asr, FasterWhisperASR)
