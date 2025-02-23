@@ -12,10 +12,42 @@ BYTES_PER_SECOND = SAMPLES_PER_SECOND * BYTES_PER_SAMPLE
 # 1 SECOND OF AUDIO = 32000 BYTES = 16000 SAMPLES
 
 
-class ASRBackend(enum.StrEnum):
-    """ASR backend to use for transcription."""
-    WHISPER = "whisper"
-    MOONSHINE = "moonshine"
+class ResponseFormat(enum.StrEnum):
+    TEXT = "text"
+    JSON = "json"
+    VERBOSE_JSON = "verbose_json"
+    SRT = "srt"
+    VTT = "vtt"
+
+
+class Language(str):
+    """Language code in ISO 639-1 format."""
+
+
+class Task(enum.StrEnum):
+    """Task to perform."""
+
+    TRANSCRIBE = "transcribe"
+    TRANSLATE = "translate"
+
+
+class Device(enum.StrEnum):
+    """Device to use for inference."""
+
+    AUTO = "auto"
+    CPU = "cpu"
+    CUDA = "cuda"
+
+
+class Quantization(enum.StrEnum):
+    """Quantization type to use for inference."""
+
+    DEFAULT = "default"
+    INT8 = "int8"
+    INT8_FLOAT16 = "int8_float16"
+    INT16 = "int16"
+    FLOAT16 = "float16"
+    FLOAT32 = "float32"
 
 
 class MoonshineConfig(BaseModel):
@@ -35,143 +67,6 @@ class MoonshineConfig(BaseModel):
     -1: Never unload the model.
     0: Unload the model immediately after usage.
     """
-
-
-# https://platform.openai.com/docs/api-reference/audio/createTranscription#audio-createtranscription-response_format
-class ResponseFormat(enum.StrEnum):
-    TEXT = "text"
-    JSON = "json"
-    VERBOSE_JSON = "verbose_json"
-    SRT = "srt"
-    VTT = "vtt"
-
-
-class Device(enum.StrEnum):
-    CPU = "cpu"
-    CUDA = "cuda"
-    AUTO = "auto"
-
-
-# https://github.com/OpenNMT/CTranslate2/blob/master/docs/quantization.md
-class Quantization(enum.StrEnum):
-    INT8 = "int8"
-    INT8_FLOAT16 = "int8_float16"
-    INT8_BFLOAT16 = "int8_bfloat16"
-    INT8_FLOAT32 = "int8_float32"
-    INT16 = "int16"
-    FLOAT16 = "float16"
-    BFLOAT16 = "bfloat16"
-    FLOAT32 = "float32"
-    DEFAULT = "default"
-
-
-# TODO: this needs to be rethought
-class Language(enum.StrEnum):
-    AF = "af"
-    AM = "am"
-    AR = "ar"
-    AS = "as"
-    AZ = "az"
-    BA = "ba"
-    BE = "be"
-    BG = "bg"
-    BN = "bn"
-    BO = "bo"
-    BR = "br"
-    BS = "bs"
-    CA = "ca"
-    CS = "cs"
-    CY = "cy"
-    DA = "da"
-    DE = "de"
-    EL = "el"
-    EN = "en"
-    ES = "es"
-    ET = "et"
-    EU = "eu"
-    FA = "fa"
-    FI = "fi"
-    FO = "fo"
-    FR = "fr"
-    GL = "gl"
-    GU = "gu"
-    HA = "ha"
-    HAW = "haw"
-    HE = "he"
-    HI = "hi"
-    HR = "hr"
-    HT = "ht"
-    HU = "hu"
-    HY = "hy"
-    ID = "id"
-    IS = "is"
-    IT = "it"
-    JA = "ja"
-    JW = "jw"
-    KA = "ka"
-    KK = "kk"
-    KM = "km"
-    KN = "kn"
-    KO = "ko"
-    LA = "la"
-    LB = "lb"
-    LN = "ln"
-    LO = "lo"
-    LT = "lt"
-    LV = "lv"
-    MG = "mg"
-    MI = "mi"
-    MK = "mk"
-    ML = "ml"
-    MN = "mn"
-    MR = "mr"
-    MS = "ms"
-    MT = "mt"
-    MY = "my"
-    NE = "ne"
-    NL = "nl"
-    NN = "nn"
-    NO = "no"
-    OC = "oc"
-    PA = "pa"
-    PL = "pl"
-    PS = "ps"
-    PT = "pt"
-    RO = "ro"
-    RU = "ru"
-    SA = "sa"
-    SD = "sd"
-    SI = "si"
-    SK = "sk"
-    SL = "sl"
-    SN = "sn"
-    SO = "so"
-    SQ = "sq"
-    SR = "sr"
-    SU = "su"
-    SV = "sv"
-    SW = "sw"
-    TA = "ta"
-    TE = "te"
-    TG = "tg"
-    TH = "th"
-    TK = "tk"
-    TL = "tl"
-    TR = "tr"
-    TT = "tt"
-    UK = "uk"
-    UR = "ur"
-    UZ = "uz"
-    VI = "vi"
-    YI = "yi"
-    YO = "yo"
-    YUE = "yue"
-    ZH = "zh"
-
-
-class Task(enum.StrEnum):
-    TRANSCRIBE = "transcribe"
-    TRANSLATE = "translate"
 
 
 class WhisperConfig(BaseModel):
@@ -199,50 +94,52 @@ class WhisperConfig(BaseModel):
     use_batched_mode: bool = False
     """
     Whether to use batch mode(introduced in 1.1.0 `faster-whisper` release) for inference. This will likely become the default in the future and the configuration option will be removed.
-    """  # noqa: E501
+    """
 
 
-# TODO: document `alias` behaviour within the docstring
 class Config(BaseSettings):
-    """Configuration for the application. Values can be set via environment variables.
+    """Configuration for the application. Values can be set via environment variables."""
 
-    Pydantic will automatically handle mapping uppercased environment variables to the corresponding fields.
-    To populate nested, the environment should be prefixed with the nested field name and an underscore. For example,
-    the environment variable `LOG_LEVEL` will be mapped to `log_level`, `WHISPER__MODEL`(note the double underscore) to `whisper.model`, to set quantization to int8, use `WHISPER__COMPUTE_TYPE=int8`, etc.
-    """  # noqa: E501
-
-    model_config = SettingsConfigDict(env_nested_delimiter="__")
+    model_config = SettingsConfigDict(env_prefix="SPEACHES_")
 
     api_key: str | None = None
-    """
-    If set, the API key will be required for all requests.
-    """
-    log_level: str = "debug"
-    """
-    Logging level. One of: 'debug', 'info', 'warning', 'error', 'critical'.
-    """
-    host: str = Field(alias="UVICORN_HOST", default="0.0.0.0")
-    port: int = Field(alias="UVICORN_PORT", default=8000)
-    allow_origins: list[str] | None = None
-    """
-    https://docs.pydantic.dev/latest/concepts/pydantic_settings/#parsing-environment-variable-values
-    Usage:
-        `export ALLOW_ORIGINS='["http://localhost:3000", "http://localhost:3001"]'`
-        `export ALLOW_ORIGINS='["*"]'`
-    """
+    """API key for authentication. If not set, authentication is disabled."""
+
+    default_language: Language = "en"
+    """Default language to use for transcription."""
+
+    default_response_format: ResponseFormat = ResponseFormat.TEXT
+    """Default response format to use for transcription."""
 
     enable_ui: bool = True
-    """
-    Whether to enable the Gradio UI. You may want to disable this if you want to minimize the dependencies and slightly improve the startup time.
-    """  # noqa: E501
+    """Whether to enable the UI."""
 
-    default_language: Language | None = None
+    loopback_host_url: str | None = None
     """
-    Default language to use for transcription. If not set, the language will be detected automatically.
-    It is recommended to set this as it will improve the performance.
+    If set this is the URL that the gradio app will use to connect to the API server hosting speaches.
+    If not set the gradio app will use the url that the user connects to the gradio app on.
     """
-    default_response_format: ResponseFormat = ResponseFormat.JSON
+
+    moonshine: MoonshineConfig = MoonshineConfig()
+    """Configuration for Moonshine ASR."""
+
     whisper: WhisperConfig = WhisperConfig()
+    """Configuration for Whisper ASR."""
+
+    # NOTE: options below are not used yet and should be ignored. Added as a placeholder for future features I'm currently working on.  # noqa: E501
+
+    chat_completion_base_url: str = "https://api.openai.com/v1"
+    chat_completion_api_key: str | None = None
+    chat_completion_model: str | None = None
+
+    speech_base_url: str | None = None
+    speech_api_key: str | None = None
+    speech_model: str = "piper"
+    speech_extra_body: dict = {"sample_rate": 24000}
+
+    transcription_base_url: str | None = None
+    transcription_api_key: str | None = None
+
     max_no_data_seconds: float = 1.0
     """
     Max duration to wait for the next audio chunk before transcription is finilized and connection is closed.
@@ -267,29 +164,3 @@ class Config(BaseSettings):
     Controls how many latest seconds of audio are being passed through VAD. Should be greater than `max_inactivity_seconds`.
     Used only for live transcription (WS /v1/audio/transcriptions).
     """  # noqa: E501
-
-    # NOTE: options below are not used yet and should be ignored. Added as a placeholder for future features I'm currently working on.  # noqa: E501
-
-    chat_completion_base_url: str = "https://api.openai.com/v1"
-    chat_completion_api_key: str | None = None
-    chat_completion_model: str | None = None
-
-    speech_base_url: str | None = None
-    speech_api_key: str | None = None
-    speech_model: str = "piper"
-    speech_extra_body: dict = {"sample_rate": 24000}
-
-    transcription_base_url: str | None = None
-    transcription_api_key: str | None = None
-
-    loopback_host_url: str | None = None
-    """
-    If set this is the URL that the gradio app will use to connect to the API server hosting speaches.
-    If not set the gradio app will use the url that the user connects to the gradio app on.
-    """
-
-    asr_backend: ASRBackend = ASRBackend.WHISPER
-    """Which ASR backend to use for transcription."""
-
-    moonshine: MoonshineConfig = MoonshineConfig()
-    """Configuration for Moonshine ASR."""

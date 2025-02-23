@@ -32,7 +32,6 @@ from speaches.asr import FasterWhisperASR
 from speaches.audio import AudioStream, audio_samples_from_file
 from speaches.config import (
     SAMPLES_PER_SECOND,
-    ASRBackend,
     Language,
     ResponseFormat,
     Task,
@@ -188,6 +187,24 @@ async def get_timestamp_granularities(request: Request) -> TimestampGranularitie
     return timestamp_granularities
 
 
+def determine_asr_backend(model_name: str | None) -> tuple[ASRBackend, str]:
+    """Determine which ASR backend to use based on the model name.
+    
+    Args:
+        model_name: The name of the model to use. If None, defaults to Whisper.
+        
+    Returns:
+        A tuple of (ASRBackend, model_path)
+    """
+    if not model_name:
+        return ASRBackend.WHISPER, "Systran/faster-whisper-small"
+        
+    if "moonshine" in model_name.lower():
+        return ASRBackend.MOONSHINE, model_name
+    
+    return ASRBackend.WHISPER, model_name
+
+
 # https://platform.openai.com/docs/api-reference/audio/createTranscription
 # https://github.com/openai/openai-openapi/blob/master/openapi.yaml#L8915
 @router.post(
@@ -215,9 +232,12 @@ def transcribe_file(
     """Transcribe audio file using the configured ASR backend."""
     response_format = response_format or config.default_response_format
     language = language or config.default_language
+    
+    # Determine which backend to use based on the model name
+    asr_backend, model_path = determine_asr_backend(model)
 
-    if config.asr_backend == ASRBackend.MOONSHINE:
-        with model_manager.load_model(config.moonshine.model_path) as asr:
+    if asr_backend == ASRBackend.MOONSHINE:
+        with model_manager.load_model(model_path) as asr:
             assert isinstance(asr, MoonshineASR)
             transcription, transcription_info = asr._transcribe(audio, prompt)
             segments = [TranscriptionSegment(
@@ -234,8 +254,7 @@ def transcribe_file(
                 words=transcription.words
             )]
     else:
-        model_name = handle_default_openai_model(model or config.whisper.model)
-        with model_manager.load_model(model_name) as asr:
+        with model_manager.load_model(model_path) as asr:
             assert isinstance(asr, FasterWhisperASR)
             segments, transcription_info = asr._transcribe(
                 audio,
@@ -306,8 +325,11 @@ async def transcribe_stream(
         await ws.accept()
         audio_receiver_task = asyncio.create_task(audio_receiver(ws, audio_stream))
 
-        if config.asr_backend == ASRBackend.MOONSHINE:
-            with model_manager.load_model(config.moonshine.model_path) as asr:
+        # Determine which backend to use based on the model name
+        asr_backend, model_path = determine_asr_backend(model)
+
+        if asr_backend == ASRBackend.MOONSHINE:
+            with model_manager.load_model(model_path) as asr:
                 assert isinstance(asr, MoonshineASR)
                 async for transcription in audio_transcriber(asr, audio_stream, config.min_duration):
                     if ws.client_state == WebSocketState.DISCONNECTED:
@@ -328,8 +350,7 @@ async def transcribe_stream(
                         )])
                     )
         else:
-            model_name = handle_default_openai_model(model or config.whisper.model)
-            with model_manager.load_model(model_name) as asr:
+            with model_manager.load_model(model_path) as asr:
                 assert isinstance(asr, FasterWhisperASR)
                 async for transcription in audio_transcriber(asr, audio_stream, config.min_duration):
                     if ws.client_state == WebSocketState.DISCONNECTED:

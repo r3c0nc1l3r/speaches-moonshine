@@ -270,3 +270,37 @@ class MoonshineModelManager:
                     unload_fn=self._handle_model_unload,
                 )
             return self.models[model_path]
+
+
+class UnifiedASRModelManager:
+    """A model manager that can handle both Whisper and Moonshine models."""
+    
+    def __init__(self, whisper_config: WhisperConfig, moonshine_ttl: int) -> None:
+        self.whisper_manager = WhisperModelManager(whisper_config)
+        self.moonshine_manager = MoonshineModelManager(moonshine_ttl)
+        self._lock = threading.Lock()
+
+    def _is_moonshine_model(self, model_name: str) -> bool:
+        return "moonshine" in model_name.lower()
+
+    def unload_model(self, model_name: str) -> None:
+        """Unload a model from memory."""
+        if self._is_moonshine_model(model_name):
+            self.moonshine_manager.unload_model(model_name)
+        else:
+            self.whisper_manager.unload_model(model_name)
+
+    def load_model(self, model_name: str) -> SelfDisposingModel[WhisperModel] | SelfDisposingModel[MoonshineASR]:
+        """Load a model into memory.
+        
+        Args:
+            model_name: Name/path of the model to load. If it contains 'moonshine' (case-insensitive),
+                      it will be loaded as a Moonshine model, otherwise as a Whisper model.
+        
+        Returns:
+            A context manager for the loaded model.
+        """
+        if self._is_moonshine_model(model_name):
+            return self.moonshine_manager.load_model(model_name)
+        else:
+            return self.whisper_manager.load_model(model_name)
