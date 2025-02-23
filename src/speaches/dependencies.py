@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from functools import lru_cache
 import logging
 from typing import Annotated
@@ -20,7 +22,12 @@ from openai.resources.audio import AsyncSpeech, AsyncTranscriptions
 from openai.resources.chat.completions import AsyncCompletions
 
 from speaches.config import ASRBackend, Config
-from speaches.model_manager import KokoroModelManager, MoonshineModelManager, PiperModelManager, WhisperModelManager
+from speaches.model_manager import (
+    KokoroModelManager,
+    MoonshineModelManager,
+    PiperModelManager,
+    WhisperModelManager,
+)
 
 logger = logging.getLogger(__name__)
 

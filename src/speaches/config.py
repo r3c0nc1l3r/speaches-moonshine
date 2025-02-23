@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import enum
 
 from pydantic import BaseModel, Field
@@ -8,6 +10,31 @@ BYTES_PER_SAMPLE = 2
 BYTES_PER_SECOND = SAMPLES_PER_SECOND * BYTES_PER_SAMPLE
 # 2 BYTES = 16 BITS = 1 SAMPLE
 # 1 SECOND OF AUDIO = 32000 BYTES = 16000 SAMPLES
+
+
+class ASRBackend(enum.StrEnum):
+    """ASR backend to use for transcription."""
+    WHISPER = "whisper"
+    MOONSHINE = "moonshine"
+
+
+class MoonshineConfig(BaseModel):
+    """Configuration for Moonshine ASR."""
+
+    model_path: str = Field(default="UsefulSensors/moonshine")
+    """
+    Path to the Moonshine model. Can be either:
+    1. A HuggingFace model ID (e.g. 'UsefulSensors/moonshine' or 'UsefulSensors/moonshine:main')
+    2. A local directory containing the model files
+    3. A direct path to the model file
+    """
+
+    ttl: int = Field(default=300, ge=-1)
+    """
+    Time in seconds until the model is unloaded if it is not being used.
+    -1: Never unload the model.
+    0: Unload the model immediately after usage.
+    """
 
 
 # https://platform.openai.com/docs/api-reference/audio/createTranscription#audio-createtranscription-response_format
@@ -266,27 +293,3 @@ class Config(BaseSettings):
 
     moonshine: MoonshineConfig = MoonshineConfig()
     """Configuration for Moonshine ASR."""
-
-
-class ASRBackend(enum.StrEnum):
-    WHISPER = "whisper"
-    MOONSHINE = "moonshine"
-
-
-class MoonshineConfig(BaseModel):
-    """Configuration for Moonshine ASR."""
-
-    model_path: str = Field(default="UsefulSensors/moonshine")
-    """
-    Path to the Moonshine model. Can be either:
-    1. A HuggingFace model ID (e.g. 'UsefulSensors/moonshine' or 'UsefulSensors/moonshine:main')
-    2. A local directory containing the model files
-    3. A direct path to the model file
-    """
-
-    ttl: int = Field(default=300, ge=-1)
-    """
-    Time in seconds until the model is unloaded if it is not being used.
-    -1: Never unload the model.
-    0: Unload the model immediately after usage.
-    """

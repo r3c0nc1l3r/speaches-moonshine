@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 from huggingface_hub import hf_hub_download
-from onnxruntime import InferenceSession
+from onnxruntime import InferenceSession, get_available_providers
 
 from speaches.api_types import TranscriptionSegment, TranscriptionWord
 from speaches.text_utils import Transcription
@@ -33,7 +33,12 @@ MODEL_FILE = "model.onnx"
 MEL_BASIS_FILE = "mel_basis.npy"
 
 # ONNX providers - prefer CUDA if available
-ONNX_PROVIDERS = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+AVAILABLE_PROVIDERS = get_available_providers()
+ONNX_PROVIDERS = (
+    ["CUDAExecutionProvider", "CPUExecutionProvider"] 
+    if "CUDAExecutionProvider" in AVAILABLE_PROVIDERS 
+    else ["CPUExecutionProvider"]
+)
 
 VOCAB = [
     "<pad>", "<s>", "</s>", "<unk>", " ", "e", "t", "a", "o", "n", "i", "h", "s",
