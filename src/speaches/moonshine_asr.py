@@ -7,8 +7,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import numpy as np
-import tflite_runtime.interpreter as tflite
 from huggingface_hub import hf_hub_download
+from onnxruntime import InferenceSession
 
 from speaches.api_types import TranscriptionSegment, TranscriptionWord
 from speaches.text_utils import Transcription
@@ -29,8 +29,11 @@ FRAME_STEP = int(SAMPLE_RATE * FRAME_STRIDE / 1000)
 
 # Default model repository and files
 DEFAULT_MODEL_REPO = "UsefulSensors/moonshine"
-MODEL_FILE = "moonshine.tflite"
+MODEL_FILE = "model.onnx"
 MEL_BASIS_FILE = "mel_basis.npy"
+
+# ONNX providers - prefer CUDA if available
+ONNX_PROVIDERS = ["CUDAExecutionProvider", "CPUExecutionProvider"]
 
 VOCAB = [
     "<pad>", "<s>", "</s>", "<unk>", " ", "e", "t", "a", "o", "n", "i", "h", "s",
@@ -83,12 +86,14 @@ def get_model_path(model_id_or_path: str) -> tuple[Path, Path]:
         model_path = Path(hf_hub_download(
             repo_id=repo_id,
             filename=MODEL_FILE,
-            revision=revision
+            revision=revision,
+            subfolder="onnx"  # Moonshine ONNX models are in the onnx subfolder
         ))
         mel_basis_path = Path(hf_hub_download(
             repo_id=repo_id,
             filename=MEL_BASIS_FILE,
-            revision=revision
+            revision=revision,
+            subfolder="onnx"
         ))
         
     if not model_path.exists():
@@ -113,10 +118,11 @@ class MoonshineASR:
                 or a direct path to the model file.
         """
         self.model_path, self.mel_basis_path = get_model_path(model_path)
-        self.interpreter = tflite.Interpreter(model_path=str(self.model_path))
-        self.interpreter.allocate_tensors()
-        self.input_details = self.interpreter.get_input_details()
-        self.output_details = self.interpreter.get_output_details()
+        self.session = InferenceSession(str(self.model_path), providers=ONNX_PROVIDERS)
+        
+        # Get input/output names
+        self.input_name = self.session.get_inputs()[0].name
+        self.output_name = self.session.get_outputs()[0].name
         
         # Load mel basis matrix
         self.mel_basis = np.load(self.mel_basis_path)
@@ -189,13 +195,14 @@ class MoonshineASR:
         
         # Prepare input tensor
         input_tensor = np.expand_dims(features, axis=0).astype(np.float32)
-        self.interpreter.set_tensor(self.input_details[0]["index"], input_tensor)
         
         # Run inference
-        self.interpreter.invoke()
+        output_data = self.session.run(
+            [self.output_name],
+            {self.input_name: input_tensor}
+        )[0]
         
-        # Get output
-        output_data = self.interpreter.get_tensor(self.output_details[0]["index"])
+        # Decode output
         words = self._decode_output(output_data)
         
         # Create word timestamps (approximate based on audio length)
@@ -213,21 +220,6 @@ class MoonshineASR:
                     probability=0.9  # Moonshine doesn't provide word-level confidence
                 )
             )
-        
-        # Create a single segment containing all words
-        segment = TranscriptionSegment(
-            id=0,
-            seek=0,
-            start=audio.start,
-            end=audio.start + audio.duration,
-            text=" ".join(words),
-            tokens=[],  # Moonshine doesn't expose token IDs
-            temperature=1.0,
-            avg_logprob=0.0,  # Moonshine doesn't provide this
-            compression_ratio=1.0,
-            no_speech_prob=0.0,  # Moonshine doesn't provide this
-            words=transcription_words
-        )
         
         transcription = Transcription(transcription_words)
         
