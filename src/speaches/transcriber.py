@@ -11,6 +11,7 @@ if TYPE_CHECKING:
 
     from speaches.api_types import TranscriptionWord
     from speaches.asr import FasterWhisperASR
+    from speaches.moonshine_asr import MoonshineASR
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +48,7 @@ def prompt(confirmed: Transcription) -> str | None:
 
 
 async def audio_transcriber(
-    asr: FasterWhisperASR,
+    asr: FasterWhisperASR | MoonshineASR,
     audio_stream: AudioStream,
     min_duration: float,
 ) -> AsyncGenerator[Transcription, None]:

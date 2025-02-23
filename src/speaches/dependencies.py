@@ -19,8 +19,8 @@ from openai import AsyncOpenAI
 from openai.resources.audio import AsyncSpeech, AsyncTranscriptions
 from openai.resources.chat.completions import AsyncCompletions
 
-from speaches.config import Config
-from speaches.model_manager import KokoroModelManager, PiperModelManager, WhisperModelManager
+from speaches.config import ASRBackend, Config
+from speaches.model_manager import KokoroModelManager, MoonshineModelManager, PiperModelManager, WhisperModelManager
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +62,26 @@ def get_kokoro_model_manager() -> KokoroModelManager:
 
 
 KokoroModelManagerDependency = Annotated[KokoroModelManager, Depends(get_kokoro_model_manager)]
+
+
+@lru_cache
+def get_moonshine_model_manager() -> MoonshineModelManager:
+    config = get_config()
+    return MoonshineModelManager(config.moonshine.ttl)
+
+
+MoonshineModelManagerDependency = Annotated[MoonshineModelManager, Depends(get_moonshine_model_manager)]
+
+
+@lru_cache
+def get_asr_model_manager() -> WhisperModelManager | MoonshineModelManager:
+    config = get_config()
+    if config.asr_backend == ASRBackend.MOONSHINE:
+        return get_moonshine_model_manager()
+    return get_model_manager()
+
+
+ASRModelManagerDependency = Annotated[WhisperModelManager | MoonshineModelManager, Depends(get_asr_model_manager)]
 
 security = HTTPBearer()
 

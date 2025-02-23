@@ -32,11 +32,18 @@ from speaches.asr import FasterWhisperASR
 from speaches.audio import AudioStream, audio_samples_from_file
 from speaches.config import (
     SAMPLES_PER_SECOND,
+    ASRBackend,
     Language,
     ResponseFormat,
     Task,
 )
-from speaches.dependencies import AudioFileDependency, ConfigDependency, ModelManagerDependency, get_config
+from speaches.dependencies import (
+    ASRModelManagerDependency,
+    AudioFileDependency,
+    ConfigDependency,
+    get_config,
+)
+from speaches.moonshine_asr import MoonshineASR
 from speaches.text_utils import segments_to_srt, segments_to_text, segments_to_vtt
 from speaches.transcriber import audio_transcriber
 
@@ -139,7 +146,7 @@ ModelName = Annotated[
 )
 def translate_file(
     config: ConfigDependency,
-    model_manager: ModelManagerDependency,
+    model_manager: ASRModelManagerDependency,
     audio: AudioFileDependency,
     model: Annotated[ModelName | None, Form()] = None,
     prompt: Annotated[str | None, Form()] = None,
@@ -189,7 +196,7 @@ async def get_timestamp_granularities(request: Request) -> TimestampGranularitie
 )
 def transcribe_file(
     config: ConfigDependency,
-    model_manager: ModelManagerDependency,
+    model_manager: ASRModelManagerDependency,
     request: Request,
     audio: AudioFileDependency,
     model: Annotated[ModelName | None, Form()] = None,
@@ -199,42 +206,51 @@ def transcribe_file(
     temperature: Annotated[float, Form()] = 0.0,
     timestamp_granularities: Annotated[
         TimestampGranularities,
-        # WARN: `alias` doesn't actually work.
         Form(alias="timestamp_granularities[]"),
     ] = ["segment"],
     stream: Annotated[bool, Form()] = False,
     hotwords: Annotated[str | None, Form()] = None,
     vad_filter: Annotated[bool, Form()] = False,
 ) -> Response | StreamingResponse:
-    if model is None:
-        model = config.whisper.model
-    if language is None:
-        language = config.default_language
-    if response_format is None:
-        response_format = config.default_response_format
-    timestamp_granularities = asyncio.run(get_timestamp_granularities(request))
-    if timestamp_granularities != DEFAULT_TIMESTAMP_GRANULARITIES and response_format != ResponseFormat.VERBOSE_JSON:
-        logger.warning(
-            "It only makes sense to provide `timestamp_granularities[]` when `response_format` is set to `verbose_json`. See https://platform.openai.com/docs/api-reference/audio/createTranscription#audio-createtranscription-timestamp_granularities."  # noqa: E501
-        )
-    with model_manager.load_model(model) as whisper:
-        whisper_model = BatchedInferencePipeline(model=whisper) if config.whisper.use_batched_mode else whisper
-        segments, transcription_info = whisper_model.transcribe(
-            audio,
-            task=Task.TRANSCRIBE,
-            language=language,
-            initial_prompt=prompt,
-            word_timestamps="word" in timestamp_granularities,
-            temperature=temperature,
-            vad_filter=vad_filter,
-            hotwords=hotwords,
-        )
-        segments = TranscriptionSegment.from_faster_whisper_segments(segments)
+    """Transcribe audio file using the configured ASR backend."""
+    response_format = response_format or config.default_response_format
+    language = language or config.default_language
 
-        if stream:
-            return segments_to_streaming_response(segments, transcription_info, response_format)
-        else:
-            return segments_to_response(segments, transcription_info, response_format)
+    if config.asr_backend == ASRBackend.MOONSHINE:
+        with model_manager.load_model(config.moonshine.model_path) as asr:
+            assert isinstance(asr, MoonshineASR)
+            transcription, transcription_info = asr._transcribe(audio, prompt)
+            segments = [TranscriptionSegment(
+                id=0,
+                seek=0,
+                start=0,
+                end=len(audio) / SAMPLES_PER_SECOND,
+                text=transcription.text,
+                tokens=[],
+                temperature=temperature,
+                avg_logprob=0.0,
+                compression_ratio=1.0,
+                no_speech_prob=0.0,
+                words=transcription.words
+            )]
+    else:
+        model_name = handle_default_openai_model(model or config.whisper.model)
+        with model_manager.load_model(model_name) as asr:
+            assert isinstance(asr, FasterWhisperASR)
+            segments, transcription_info = asr._transcribe(
+                audio,
+                language=language,
+                task=Task.TRANSCRIBE,
+                prompt=prompt,
+                temperature=temperature,
+                timestamp_granularities=timestamp_granularities,
+                hotwords=hotwords.split(",") if hotwords else None,
+                vad_filter=vad_filter,
+            )
+
+    if stream:
+        return segments_to_streaming_response(segments, transcription_info, response_format)
+    return segments_to_response(segments, transcription_info, response_format)
 
 
 async def audio_receiver(ws: WebSocket, audio_stream: AudioStream) -> None:
@@ -271,7 +287,7 @@ async def audio_receiver(ws: WebSocket, audio_stream: AudioStream) -> None:
 @router.websocket("/v1/audio/transcriptions")
 async def transcribe_stream(
     config: ConfigDependency,
-    model_manager: ModelManagerDependency,
+    model_manager: ASRModelManagerDependency,
     ws: WebSocket,
     model: Annotated[ModelName | None, Query()] = None,
     language: Annotated[Language | None, Query()] = None,
@@ -279,38 +295,55 @@ async def transcribe_stream(
     temperature: Annotated[float, Query()] = 0.0,
     vad_filter: Annotated[bool, Query()] = False,
 ) -> None:
-    if model is None:
-        model = config.whisper.model
-    if language is None:
-        language = config.default_language
-    if response_format is None:
-        response_format = config.default_response_format
-    await ws.accept()
-    transcribe_opts = {
-        "language": language,
-        "temperature": temperature,
-        "vad_filter": vad_filter,
-        "condition_on_previous_text": False,
-    }
-    with model_manager.load_model(model) as whisper:
-        asr = FasterWhisperASR(whisper, **transcribe_opts)
-        audio_stream = AudioStream()
-        async with asyncio.TaskGroup() as tg:
-            tg.create_task(audio_receiver(ws, audio_stream))
-            async for transcription in audio_transcriber(asr, audio_stream, min_duration=config.min_duration):
-                logger.debug(f"Sending transcription: {transcription.text}")
-                if ws.client_state == WebSocketState.DISCONNECTED:
-                    break
+    """Stream transcription using the configured ASR backend."""
+    response_format = response_format or config.default_response_format
+    language = language or config.default_language
 
-                if response_format == ResponseFormat.TEXT:
-                    await ws.send_text(transcription.text)
-                elif response_format == ResponseFormat.JSON:
-                    await ws.send_json(CreateTranscriptionResponseJson.from_transcription(transcription).model_dump())
-                elif response_format == ResponseFormat.VERBOSE_JSON:
-                    await ws.send_json(
-                        CreateTranscriptionResponseVerboseJson.from_transcription(transcription).model_dump()
+    audio_stream = AudioStream()
+    audio_receiver_task = None
+
+    try:
+        await ws.accept()
+        audio_receiver_task = asyncio.create_task(audio_receiver(ws, audio_stream))
+
+        if config.asr_backend == ASRBackend.MOONSHINE:
+            with model_manager.load_model(config.moonshine.model_path) as asr:
+                assert isinstance(asr, MoonshineASR)
+                async for transcription in audio_transcriber(asr, audio_stream, config.min_duration):
+                    if ws.client_state == WebSocketState.DISCONNECTED:
+                        break
+                    await ws.send_text(
+                        segments_to_text([TranscriptionSegment(
+                            id=0,
+                            seek=0,
+                            start=0,
+                            end=transcription.end,
+                            text=transcription.text,
+                            tokens=[],
+                            temperature=temperature,
+                            avg_logprob=0.0,
+                            compression_ratio=1.0,
+                            no_speech_prob=0.0,
+                            words=transcription.words
+                        )])
                     )
+        else:
+            model_name = handle_default_openai_model(model or config.whisper.model)
+            with model_manager.load_model(model_name) as asr:
+                assert isinstance(asr, FasterWhisperASR)
+                async for transcription in audio_transcriber(asr, audio_stream, config.min_duration):
+                    if ws.client_state == WebSocketState.DISCONNECTED:
+                        break
+                    await ws.send_text(transcription.text)
 
-    if ws.client_state != WebSocketState.DISCONNECTED:
-        logger.info("Closing the connection.")
-        await ws.close()
+    except WebSocketDisconnect:
+        logger.info("WebSocket client disconnected")
+    finally:
+        if audio_receiver_task is not None:
+            audio_receiver_task.cancel()
+            try:
+                await audio_receiver_task
+            except asyncio.CancelledError:
+                pass
+        if ws.client_state != WebSocketState.DISCONNECTED:
+            await ws.close()

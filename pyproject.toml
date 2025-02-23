@@ -21,6 +21,7 @@ dependencies = [
     "openai>=1.60.0",
     "aiostream>=0.6.4",
     "cachetools>=5.5.1",
+    "tflite-runtime>=2.15.0",
 ]
 
 [project.optional-dependencies]

@@ -14,6 +14,7 @@ from kokoro_onnx import Kokoro
 from onnxruntime import InferenceSession
 
 from speaches.hf_utils import get_kokoro_model_path, get_piper_voice_model_file
+from speaches.moonshine_asr import MoonshineASR
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -229,3 +230,43 @@ class KokoroModelManager:
                 unload_fn=self._handle_model_unload,
             )
             return self.loaded_models[model_name]
+
+
+class MoonshineModelManager:
+    def __init__(self, ttl: int) -> None:
+        self.models: OrderedDict[str, SelfDisposingModel[MoonshineASR]] = OrderedDict()
+        self.ttl = ttl
+        self.rlock = threading.RLock()
+
+    def _load_fn(self, model_path: str) -> MoonshineASR:
+        return MoonshineASR(model_path=model_path)
+
+    def _handle_model_unload(self, model_name: str) -> None:
+        logger.info(f"Unloading Moonshine model {model_name}")
+        gc.collect()
+
+    def unload_model(self, model_name: str) -> None:
+        with self.rlock:
+            if model_name in self.models:
+                self.models[model_name].unload()
+                del self.models[model_name]
+
+    def load_model(self, model_path: str) -> SelfDisposingModel[MoonshineASR]:
+        """Load a Moonshine model.
+
+        Args:
+            model_path: Path to the TFLite model file.
+
+        Returns:
+            A context manager for the loaded model.
+        """
+        with self.rlock:
+            if model_path not in self.models:
+                logger.info(f"Loading Moonshine model {model_path}")
+                self.models[model_path] = SelfDisposingModel(
+                    model_id=model_path,
+                    load_fn=lambda: self._load_fn(model_path),
+                    ttl=self.ttl,
+                    unload_fn=self._handle_model_unload,
+                )
+            return self.models[model_path]

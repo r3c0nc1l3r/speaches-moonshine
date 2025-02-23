@@ -260,3 +260,33 @@ class Config(BaseSettings):
     If set this is the URL that the gradio app will use to connect to the API server hosting speaches.
     If not set the gradio app will use the url that the user connects to the gradio app on.
     """
+
+    asr_backend: ASRBackend = ASRBackend.WHISPER
+    """Which ASR backend to use for transcription."""
+
+    moonshine: MoonshineConfig = MoonshineConfig()
+    """Configuration for Moonshine ASR."""
+
+
+class ASRBackend(enum.StrEnum):
+    WHISPER = "whisper"
+    MOONSHINE = "moonshine"
+
+
+class MoonshineConfig(BaseModel):
+    """Configuration for Moonshine ASR."""
+
+    model_path: str = Field(default="UsefulSensors/moonshine")
+    """
+    Path to the Moonshine model. Can be either:
+    1. A HuggingFace model ID (e.g. 'UsefulSensors/moonshine' or 'UsefulSensors/moonshine:main')
+    2. A local directory containing the model files
+    3. A direct path to the model file
+    """
+
+    ttl: int = Field(default=300, ge=-1)
+    """
+    Time in seconds until the model is unloaded if it is not being used.
+    -1: Never unload the model.
+    0: Unload the model immediately after usage.
+    """
